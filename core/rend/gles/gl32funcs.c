@@ -5,7 +5,7 @@
 
 void load_gles_symbols()
 {
-#ifdef _ANDROID
+#if defined(_ANDROID) || defined(TARGET_SWITCH)
 	for (int i = 0; rglgen_symbol_map[i].sym != NULL; i++)
 		*(void **)rglgen_symbol_map[i].ptr = eglGetProcAddress(rglgen_symbol_map[i].sym);
 #endif

@@ -1,3 +1,4 @@
+#include <malloc.h>
 #include "ta.h"
 #include "ta_ctx.h"
 
@@ -17,7 +18,6 @@ rend_context vd_rc;
 
 #if ANDROID
 #include <errno.h>
-#include <malloc.h>
 
 int posix_memalign(void** memptr, size_t alignment, size_t size) {
   if ((alignment & (alignment - 1)) != 0 || alignment == 0) {
@@ -46,7 +46,7 @@ void* OS_aligned_malloc(size_t align, size_t size)
         #elif HOST_OS == OS_WINDOWS
                 result = _aligned_malloc(size, align);
         #else
-                if(posix_memalign(&result, align, size)) result = 0;
+                result = memalign(align, size);
         #endif
                 return result;
 }

@@ -86,35 +86,39 @@ u32 bm_gc_luc,bm_gcf_luc;
 
 #define FPCA(x) ((DynarecCodeEntryPtr&)sh4rcb.fpcb[(x>>1)&FPCB_MASK])
 
+// This returns an executable address
 DynarecCodeEntryPtr DYNACALL bm_GetCode(u32 addr)
 {
-	//rdv_FailedToFindBlock_pc=addr;
 	DynarecCodeEntryPtr rv=(DynarecCodeEntryPtr)FPCA(addr);
 
 	return (DynarecCodeEntryPtr)rv;
 }
 
+// This returns an executable address
 DynarecCodeEntryPtr DYNACALL bm_GetCode2(u32 addr)
 {
 	return (DynarecCodeEntryPtr)bm_GetCode(addr);
 }
 
+// This returns an executable address
 RuntimeBlockInfo* DYNACALL bm_GetBlock(u32 addr)
 {
-	DynarecCodeEntryPtr cde=bm_GetCode(addr);
+	DynarecCodeEntryPtr cde = bm_GetCode(addr);   // Returns RX pointer
 
-	if (cde==ngen_FailedToFindBlock)
+	if (cde == ngen_FailedToFindBlock)
 		return 0;
 	else
-		return bm_GetBlock((void*)cde);
+		return bm_GetBlock((void*)cde);  // Returns RX pointer
 }
 
+// This takes a RX address and returns the info block ptr (RW space)
 RuntimeBlockInfo* bm_GetBlock(void* dynarec_code)
 {
-	blkmap_t::iterator iter=blkmap.find((RuntimeBlockInfo*)dynarec_code);
+	void *dynarecrw = CC_RX2RW(dynarec_code);
+	blkmap_t::iterator iter = blkmap.find((RuntimeBlockInfo*)dynarecrw);
 	if (iter!=blkmap.end())
 	{
-		verify((*iter)->contains_code((u8*)dynarec_code));
+		verify((*iter)->contains_code((u8*)dynarecrw));
 		return *iter;
 	}
 	else
@@ -124,11 +128,14 @@ RuntimeBlockInfo* bm_GetBlock(void* dynarec_code)
 	}
 }
 
+// Takes RX pointer and returns a RW pointer
 RuntimeBlockInfo* bm_GetStaleBlock(void* dynarec_code)
 {
+	printf("bm_GetStaleBlock %p\n", dynarec_code);
+	void *dynarecrw = CC_RX2RW(dynarec_code);
 	for(u32 i=0;i<del_blocks.size();i++)
 	{
-		if (del_blocks[i]->contains_code((u8*)dynarec_code))
+		if (del_blocks[i]->contains_code((u8*)dynarecrw))
 			return del_blocks[i];
 	}
 
@@ -145,9 +152,8 @@ void bm_AddBlock(RuntimeBlockInfo* blk)
 	}
 	blkmap.insert(blk);
 
-
 	verify((void*)bm_GetCode(blk->addr)==(void*)ngen_FailedToFindBlock);
-	FPCA(blk->addr)=blk->code;
+	FPCA(blk->addr) = CC_RW2RX(blk->code);
 
 #ifdef DYNA_OPROF
 	if (oprofHandle)
@@ -175,7 +181,7 @@ bool UDgreaterLOC ( RuntimeBlockInfo* elem1, RuntimeBlockInfo* elem2 )
 	return elem1->addr < elem2->addr;
 }
 
-u32 FindPath(RuntimeBlockInfo* rbi, u32 sa,s32 mc,u32& plc)
+/*u32 FindPath(RuntimeBlockInfo* rbi, u32 sa,s32 mc,u32& plc)
 {
 	if (mc < 0 || rbi==0)
 		return 0;
@@ -235,7 +241,7 @@ void FindPath(u32 start)
 		printf("%08X: %d, %d, %.2f, %.2f\n",start,pclc,plen,pclc/(float)plen,plen*2*rbi->runs/1000.f);
 	}
 	rbi->runs=0;
-}
+}*/
 
 #include <map>
 u32 rebuild_counter=20;
@@ -247,7 +253,7 @@ void bm_Periodical_1s()
 	del_blocks.clear();
 
 	if (rebuild_counter>0) rebuild_counter--;
-#if HOST_OS==OS_WINDOWS && 0
+#if 0 && HOST_OS==OS_WINDOWS
 	std::sort(all_blocks.begin(),all_blocks.end(),UDgreaterX);
 
 	map<u32,u32> vmap;
@@ -298,7 +304,7 @@ void bm_Periodical_1s()
 	printf("Total Saved: %.2f || Total Loop Runs: %.2f  || Total Runs: %.2f\n",total_saved/1000.f,total_l_runs/1000.f,total_runs/1000.f);
 #endif
 }
-
+/*
 void constprop(RuntimeBlockInfo* blk);
 void bm_Rebuild()
 {
@@ -337,7 +343,7 @@ void bm_Rebuild()
 	}
 
 	rebuild_counter=30;
-}
+}*/
 
 void bm_vmem_pagefill(void** ptr,u32 PAGE_SZ)
 {

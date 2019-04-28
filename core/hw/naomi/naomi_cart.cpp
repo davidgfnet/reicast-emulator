@@ -18,7 +18,7 @@ bool bios_loaded = false;
 #if HOST_OS == OS_WINDOWS
 	typedef HANDLE fd_t;
 	#define INVALID_FD INVALID_HANDLE_VALUE
-#else
+#elif HOST_OS != OS_HORIZON
 	typedef int fd_t;
 	#define INVALID_FD -1
 
@@ -28,14 +28,16 @@ bool bios_loaded = false;
 	#include <errno.h>
 #endif
 
-fd_t*	RomCacheMap = NULL;
-u32		RomCacheMapCount;
-
 char naomi_game_id[33];
 InputDescriptors *NaomiGameInputs;
 u8 *naomi_default_eeprom;
 
 extern RomChip sys_rom;
+
+#if DC_PLATFORM == DC_PLATFORM_NAOMI
+
+fd_t*	RomCacheMap = NULL;
+u32		RomCacheMapCount;
 
 static bool naomi_LoadBios(const char *filename, Archive *child_archive, Archive *parent_archive, int region)
 {
@@ -1036,3 +1038,6 @@ void M2Cartridge::Unserialize(void** data, unsigned int* total_size) {
 	REICAST_US(naomi_cart_ram);
 	NaomiCartridge::Unserialize(data, total_size);
 }
+
+#endif
+

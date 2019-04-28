@@ -22,7 +22,6 @@
 #if FEAT_SHREC == DYNAREC_JIT
 
 #include <unistd.h>
-#include <sys/mman.h>
 #include <map>
 
 #include "deps/vixl/aarch64/macro-assembler-aarch64.h"
@@ -39,6 +38,10 @@ using namespace vixl::aarch64;
 #include "hw/sh4/sh4_mem.h"
 #include "hw/sh4/sh4_rom.h"
 #include "arm64_regalloc.h"
+
+extern "C" 	void armDCacheFlush(void* addr, size_t size);
+extern "C" 	void armICacheInvalidate(void* addr, size_t size);
+
 
 #undef do_sqw_nommu
 
@@ -147,7 +150,7 @@ __asm__
 	"ngen_LinkBlock_Shared_stub:			\n\t"
 		"mov x0, lr							\n\t"
 		"sub x0, x0, #4						\n\t"	// go before the call
-		"bl rdv_LinkBlock					\n\t"
+		"bl rdv_LinkBlock					\n\t"   // passes the return RX addr
 		"br x0								\n"
 
 		".hidden ngen_FailedToFindBlock_	\n\t"
@@ -1013,7 +1016,7 @@ public:
 
 			Ldr(w29, sh4_context_mem_operand(&next_pc));
 
-			GenBranch(no_update);
+			GenBranchRuntime(no_update);
 			break;
 
 		default:
@@ -1038,7 +1041,13 @@ public:
 
 			emit_Skip(block->host_code_size);
 		}
+		printf("Flushing %d %p %p %d\n", (int)rewrite, GetBuffer()->GetStartAddress<void*>(), GetBuffer()->GetEndAddress<void*>(), GetBuffer()->GetSizeInBytes());
 		Arm64CacheFlush(GetBuffer()->GetStartAddress<void*>(), GetBuffer()->GetEndAddress<void*>());
+		Arm64CacheFlush(CC_RW2RX(GetBuffer()->GetStartAddress<void*>()), CC_RW2RX(GetBuffer()->GetEndAddress<void*>()));
+
+		// hack hack hack
+		//armDCacheFlush(GetBuffer()->GetStartAddress<void*>(), (10*1024*1024));
+		//armICacheInvalidate(CC_RW2RX(GetBuffer()->GetStartAddress<void*>()), (10*1024*1024));
 #if 0
 //		if (rewrite)
 		{
@@ -1063,12 +1072,29 @@ private:
 	template <typename R, typename... P>
 	void GenCallRuntime(R (*function)(P...))
 	{
-		ptrdiff_t offset = reinterpret_cast<uintptr_t>(function) - GetBuffer()->GetStartAddress<uintptr_t>();
+		// Calling the runtime will generate an unbounded offset (the buffer here is RW)
+		// Therefore we must adjust it when rxptr != rwptr
+		//printf("%p %p %p %d %p\n", reinterpret_cast<uintptr_t>(function), CC_RW2RX(reinterpret_cast<uintptr_t>(function)), GetBuffer()->GetStartAddress<uintptr_t>(), cc_rx_offset, emit_GetCCPtr());
+		ptrdiff_t offset = reinterpret_cast<uintptr_t>(function) - CC_RW2RX(GetBuffer()->GetStartAddress<uintptr_t>());
 		verify(offset >= -128 * 1024 * 1024 && offset <= 128 * 1024 * 1024);
 		verify((offset & 3) == 0);
 		Label function_label;
 		BindToOffset(&function_label, offset);
 		Bl(&function_label);
+	}
+
+	template <typename R, typename... P>
+	void GenBranchRuntime(R (*function)(P...))
+	{
+		// Branching to the runtime will generate an unbounded offset (the buffer here is RW)
+		// Therefore we must adjust it when rxptr != rwptr
+		//printf("%p %p %d %p\n", reinterpret_cast<uintptr_t>(function), GetBuffer()->GetStartAddress<uintptr_t>(), cc_rx_offset, emit_GetCCPtr());
+		ptrdiff_t offset = reinterpret_cast<uintptr_t>(function) - CC_RW2RX(GetBuffer()->GetStartAddress<uintptr_t>());
+		verify(offset >= -128 * 1024 * 1024 && offset <= 128 * 1024 * 1024);
+		verify((offset & 3) == 0);
+		Label function_label;
+		BindToOffset(&function_label, offset);
+		B(&function_label);
 	}
 
 	template <typename R, typename... P>
@@ -1461,7 +1487,7 @@ void ngen_CC_Finish(shil_opcode* op)
 
 bool ngen_Rewrite(unat& host_pc, unat, unat)
 {
-	//printf("ngen_Rewrite pc %p\n", host_pc);
+	printf("ngen_Rewrite pc %p\n", host_pc);
 	RuntimeBlockInfo *block = bm_GetBlock((void *)host_pc);
 	if (block == NULL)
 	{
@@ -1521,6 +1547,7 @@ void Arm64RegAlloc::Writeback_FPU(u32 reg, eFReg nreg)
 }
 
 
+/*
 extern "C" void do_sqw_nommu_area_3(u32 dst, u8* sqb)
 {
 	__asm__
@@ -1538,5 +1565,5 @@ extern "C" void do_sqw_nommu_area_3(u32 dst, u8* sqb)
 
 		: : : "memory"
 	);
-}
+}*/
 #endif	// FEAT_SHREC == DYNAREC_JIT

@@ -385,7 +385,7 @@ void* rend_thread(void* p)
 	rend_init_renderer();
 
 	//we don't know if this is true, so let's not speculate here
-	//renderer->Resize(640, 480);
+	renderer->Resize(1280, 720);
 
 	while (renderer_enabled)
 	{

@@ -73,6 +73,10 @@ ifdef FOR_WINDOWS
     RZDCY_MODULES += windows/
 endif
 
+ifdef FOR_SWITCH
+    RZDCY_MODULES += switch/
+endif
+
 ifdef FOR_PANDORA
 RZDCY_CFLAGS	:= \
 	$(CFLAGS) -c -O3 \

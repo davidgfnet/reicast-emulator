@@ -48,6 +48,18 @@
 
 #define CODE_SIZE   (10*1024*1024)
 
+#if HOST_OS == OS_HORIZON
+// For Horizon we use two pointers, one to write (RW) and another one
+// to jump and execute (RX). By default CodeCache is the RW one, since it
+// is used all over the place and then we create a macro that converts to
+// the RX version of it, by adding some offset.
+extern uintptr_t cc_rx_offset;
+#define CC_RW2RX(ptr) ((ptr) + cc_rx_offset)
+#define CC_RX2RW(ptr) ((ptr) - cc_rx_offset)
+#else
+#define CC_RW2RX(ptr) (ptr)
+#define CC_RX2RW(ptr) (ptr)
+#endif
 
 //alternative emit ptr, set to 0 to use the main buffer
 extern u32* emit_ptr;

@@ -142,6 +142,30 @@ else ifneq (,$(findstring lincpp,$(platform)))
     CFLAGS += -D TARGET_LINUX_x64 -D TARGET_NO_JIT
     CXXFLAGS += -fexceptions -std=gnu++11
 
+# Nintendo Switch (Horizon OS)
+else ifneq (,$(findstring switch,$(platform)))
+    # This is WIP! One needs to build like this:
+    # export DEVKITPRO=/opt/devkitpro
+    # export PATH=$PATH:$DEVKITPRO/devkitA64/bin
+    # make platform=switch CC_PREFIX=aarch64-none-elf- -j20
+    # $DEVKITPRO/tools/bin/elf2nro reicast.elf reicast.nro
+    NOT_ARM := 1
+    ARM64_REC := 1
+    USE_GLES := 1
+    NO_NIXPROF := 1
+    FOR_SWITCH := 1
+    undefine WEBUI
+    undefine USE_X11
+    undefine USE_ALSA
+    undefine USE_OSS
+    undefine USE_EVDEV
+    undefine USE_UDEV
+    undefine USE_MODEM
+    undefine FOR_LINUX
+    INCS += -I$(DEVKITPRO)/portlibs/switch/include -I$(DEVKITPRO)/libnx/include
+    CFLAGS += -D__SWITCH__ -D TARGET_SWITCH -D TARGET_NO_AREC -D TARGET_NO_NVMEM -D TARGET_NO_COREIO_HTTP -D TARGET_NO_OPENMP -D TARGET_NO_WEBUI -D TARGET_NO_NIXPROF
+    CFLAGS += -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE
+    CXXFLAGS += -fno-rtti -fno-exceptions
 # Raspberry Pi 2
 else ifneq (,$(findstring rpi,$(platform)))
     CFLAGS += -D TARGET_BEAGLE -D TARGET_LINUX_ARMELv7 -DARM_HARDFP -fsingle-precision-constant
@@ -269,7 +293,7 @@ endif
 RZDCY_SRC_DIR = $(LOCAL_PATH)/../../core
 include $(RZDCY_SRC_DIR)/core.mk
 
-LDFLAGS += -g -Wl,-Map,$(notdir $@).map,--gc-sections -Wl,-O3 -Wl,--sort-common -fopenmp
+LDFLAGS += -g -Wl,-Map,$(notdir $@).map,--gc-sections -Wl,-O3 -Wl,--sort-common #-fopenmp
 
 CFLAGS += $(RZDCY_CFLAGS) -g -O3 -D RELEASE -c -D USES_HOMEDIR -fopenmp #-D NO_REND
 CFLAGS += -frename-registers -fno-strict-aliasing
@@ -369,6 +393,11 @@ ifdef USE_GLES
     LIBS += -lEGL -lGLESv2
 else ifdef FOR_LINUX
     LIBS += -ldl -lGL #for desktop gl
+endif
+
+ifdef FOR_SWITCH
+    LIBS += -L$(DEVKITPRO)/portlibs/switch/lib -L$(DEVKITPRO)/libnx/lib/ -lglapi -ldrm_nouveau -lnx
+    LDFLAGS += -specs=$(DEVKITPRO)/libnx/switch.specs -march=armv8-a -mtune=cortex-a57 -mtp=soft -fPIE 
 endif
 
 #softrend?

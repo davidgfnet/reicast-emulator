@@ -5,6 +5,12 @@
 #elif HOST_OS==OS_LINUX
 #include <unistd.h>
 #include <sys/mman.h>
+#elif HOST_OS == OS_HORIZON
+extern "C" {
+#include <switch/kernel/svc.h>
+#include <switch/kernel/virtmem.h>
+#include <switch/runtime/env.h>
+}
 #endif
 
 #include "../sh4_interpreter.h"
@@ -32,7 +38,7 @@
 u8 SH4_TCB[CODE_SIZE+4096]
 #if HOST_OS == OS_WINDOWS || FEAT_SHREC != DYNAREC_JIT
 	;
-#elif HOST_OS == OS_LINUX
+#elif HOST_OS == OS_LINUX || HOST_OS == OS_HORIZON
 	__attribute__((section(".text")));
 #elif HOST_OS==OS_DARWIN
 	__attribute__((section("__TEXT,.text")));
@@ -41,12 +47,15 @@ u8 SH4_TCB[CODE_SIZE+4096]
 #endif
 #endif
 
+#if HOST_OS == OS_HORIZON
+uintptr_t cc_rx_offset;
+#endif
+
 u8* CodeCache;
 
-
-u32 LastAddr;
-u32 LastAddr_min;
-u32* emit_ptr=0;
+u32 LastAddr = 0;
+u32 LastAddr_min = 0;
+u32* emit_ptr = 0;
 
 void* emit_GetCCPtr() { return emit_ptr==0?(void*)&CodeCache[LastAddr]:(void*)emit_ptr; }
 void emit_SetBaseAddr() { LastAddr_min = LastAddr; }
@@ -240,6 +249,8 @@ void RuntimeBlockInfo::Setup(u32 rpc,fpscr_t rfpu_cfg)
 
 DynarecCodeEntryPtr rdv_CompilePC()
 {
+	printf("rdv_CompilePC %x\n", next_pc);
+
 	u32 pc=next_pc;
 
 	if (emit_FreeSpace()<16*1024 || pc==0x8c0000e0 || pc==0xac010000 || pc==0xac008300)
@@ -253,7 +264,6 @@ DynarecCodeEntryPtr rdv_CompilePC()
 
 		rbi->Setup(pc,fpscr);
 
-		
 		bool do_opts=((rbi->addr&0x3FFFFFFF)>0x0C010100);
 		rbi->staging_runs=do_opts?100:-100;
 		ngen_Compile(rbi,DoCheck(rbi->addr),(pc&0xFFFFFF)==0x08300 || (pc&0xFFFFFF)==0x10000,false,do_opts);
@@ -275,7 +285,10 @@ DynarecCodeEntryPtr DYNACALL rdv_FailedToFindBlock(u32 pc)
 	//printf("rdv_FailedToFindBlock ~ %08X\n",pc);
 	next_pc=pc;
 
-	return rdv_CompilePC();
+	//printf("rdv_FailedToFindBlock\n");
+
+	// The returned address is used to jump directly
+	return CC_RW2RX(rdv_CompilePC());
 }
 
 static void ngen_FailedToFindBlock_internal() {
@@ -312,37 +325,31 @@ u32 DYNACALL rdv_DoInterrupts(void* block_cpde)
 
 DynarecCodeEntryPtr DYNACALL rdv_BlockCheckFail(u32 pc)
 {
+	//printf("rdv_BlockCheckFail\n");
 	next_pc=pc;
 	recSh4_ClearCache();
-	return rdv_CompilePC();
-}
-
-DynarecCodeEntryPtr rdv_FindCode()
-{
-	DynarecCodeEntryPtr rv=bm_GetCode(next_pc);
-	if (rv==ngen_FailedToFindBlock)
-		return 0;
-	
-	return rv;
+	return CC_RW2RX(rdv_CompilePC());
 }
 
 DynarecCodeEntryPtr rdv_FindOrCompile()
 {
-	DynarecCodeEntryPtr rv=bm_GetCode(next_pc);
-	if (rv==ngen_FailedToFindBlock)
-		rv=rdv_CompilePC();
+	//printf("rdv_FindOrCompile\n");
+	DynarecCodeEntryPtr rv = bm_GetCode(next_pc);  // Returns exec addr
+	if (rv == ngen_FailedToFindBlock)
+		rv = CC_RW2RX(rdv_CompilePC());  // Returns rw addr
 	
 	return rv;
 }
 
-void* DYNACALL rdv_LinkBlock(u8* code,u32 dpc)
+void* DYNACALL rdv_LinkBlock(u8* code, u32 dpc)
 {
-	RuntimeBlockInfo* rbi=bm_GetBlock(code);
+	// code is the RX addr to return after, however bm_GetBlock returns RW
+	RuntimeBlockInfo* rbi = bm_GetBlock(code);
 
 	if (!rbi)
 	{
-		printf("Stale block ..");
-		rbi=bm_GetStaleBlock(code);
+		//printf("Stale block ..");
+		rbi = bm_GetStaleBlock(code);
 	}
 	
 	verify(rbi != NULL);
@@ -365,9 +372,13 @@ void* DYNACALL rdv_LinkBlock(u8* code,u32 dpc)
 			next_pc=rbi->NextBlock;
 	}
 
-	DynarecCodeEntryPtr rv=rdv_FindOrCompile();
+	printf("rdv_LinkBlock ... %p %x %x\n", code, dpc, next_pc);
+
+	DynarecCodeEntryPtr rv = rdv_FindOrCompile();   // Returns rx ptr
 
 	bool do_link=bm_GetBlock(code)==rbi;
+
+	//printf("rdv_LinkBlock 2...\n");
 
 	if (do_link)
 	{
@@ -398,6 +409,7 @@ void* DYNACALL rdv_LinkBlock(u8* code,u32 dpc)
 
 			nxt->AddRef(rbi);
 		}
+		//printf("rdv_LinkBlock RELINK...\n");
 		u32 ncs=rbi->relink_offset+rbi->Relink();
 		verify(rbi->host_code_size>=ncs);
 		rbi->host_code_size=ncs;
@@ -405,8 +417,9 @@ void* DYNACALL rdv_LinkBlock(u8* code,u32 dpc)
 	else
 	{
 		printf(" .. null RBI: %08X -- unlinked stale block\n",next_pc);
-	}
-	
+	}	
+
+	//printf("rdv_LinkBlock done...\n");
 	return (void*)rv;
 }
 void recSh4_Stop()
@@ -443,7 +456,6 @@ void recSh4_Init()
 	printf("recSh4 Init\n");
 	Sh4_int_Init();
 	bm_Init();
-	bm_Reset();
 
 	verify(rcb_noffs(p_sh4rcb->fpcb) == FPCB_OFFSET);
 
@@ -471,9 +483,9 @@ void recSh4_Init()
 	}
 #else
 	CodeCache = (u8*)VirtualAlloc(NULL, CODE_SIZE, MEM_RESERVE | MEM_COMMIT, PAGE_EXECUTE_READWRITE);
-#endif
+#endif  // _MSC_VER
 	verify(CodeCache != NULL);
-#else
+#else  // not _WIN64
 	CodeCache = (u8*)(((unat)SH4_TCB+4095)& ~4095);
 #endif
 
@@ -503,8 +515,40 @@ void recSh4_Init()
 	memset(CodeCache,0xFF,CODE_SIZE);
 #endif
 
+#elif HOST_OS == OS_HORIZON
+
+	// Create a pair of pointers one for each purpose
+	u8 *rxptr = CodeCache;
+	MemoryInfo meminfo;
+	u32 pagei;
+	int rc = svcQueryMemory(&meminfo, &pagei, (uintptr_t)rxptr);
+
+	// Ensure that the rxptr is really rx
+	verify(!rc && (meminfo.perm & Perm_R) && (meminfo.perm & Perm_X));
+	// Tested and returns svcQueryMemory type=8 attr=0 perm=5 when running on hbloader using Atmosphere 0.8.6 & FW 7.0.1
+
+	// Try remap it to a different place with RW perms
+	const unsigned sizeremap = ((CODE_SIZE + PAGE_SIZE) & (~(PAGE_SIZE-1)));
+	u8 *rwptr = (u8*)virtmemReserve(sizeremap);
+	int rc2 = svcMapProcessMemory(rwptr, envGetOwnProcessHandle(), (uintptr_t)rxptr, sizeremap);
+	verify(!rc2);
+
+	// Ensure the pointer is RW for real.
+	int rc3 = svcQueryMemory(&meminfo, &pagei, (uintptr_t)rwptr);
+	verify(!rc && (meminfo.perm & Perm_R) && (meminfo.perm & Perm_W));
+
+	// Offset from RW (ptr) to RX
+	CodeCache = rwptr;
+	cc_rx_offset = rxptr - rwptr;
+
+	printf("%p %p %llu\n", rxptr, rwptr, cc_rx_offset);
+
+#else
+#error "What OS are you trying to use human?"
 #endif
 	ngen_init();
+
+	bm_Reset();
 }
 
 void recSh4_Term()

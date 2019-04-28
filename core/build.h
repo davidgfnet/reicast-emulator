@@ -134,6 +134,7 @@
 #define OS_DARWIN    0x10000003
 #define OS_IOS       0x10000004
 #define OS_ANDROID   0x10000005
+#define OS_HORIZON   0x10000006
 
 #define OS_UWP       0x10000011
 #define OS_NSW_HOS   0x80000001
@@ -221,6 +222,9 @@
 #elif defined(TARGET_OSX_X64)
     #define HOST_OS OS_DARWIN
     #define HOST_CPU CPU_X64
+#elif defined(TARGET_SWITCH)
+    #define HOST_OS OS_HORIZON
+    #define HOST_CPU CPU_GENERIC
 #else
 	#error Invalid Target: TARGET_* not defined
 #endif

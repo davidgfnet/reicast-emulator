@@ -1,3 +1,4 @@
+#include <malloc.h>
 #include "_vmem.h"
 #include "hw/aica/aica_if.h"
 #include "hw/sh4/dyna/blockmanager.h"
@@ -401,11 +402,7 @@ void* malloc_pages(size_t size) {
 #elif defined(_ISOC11_SOURCE)
 	return aligned_alloc(PAGE_SIZE, size);
 #else
-	void *data;
-	if (posix_memalign(&data, PAGE_SIZE, size) != 0)
-		return NULL;
-	else
-		return data;
+	return memalign(PAGE_SIZE, size);
 #endif
 }
 
