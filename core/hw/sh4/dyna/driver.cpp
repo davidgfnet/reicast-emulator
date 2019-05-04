@@ -3,6 +3,7 @@
 #if HOST_OS==OS_WINDOWS
 #include <windows.h>
 #elif HOST_OS==OS_LINUX
+#include <fcntl.h>
 #include <unistd.h>
 #include <sys/mman.h>
 #endif
@@ -42,7 +43,7 @@ u8 SH4_TCB[CODE_SIZE+4096]
 #endif
 
 u8* CodeCache;
-
+uintptr_t cc_rx_offset;
 
 u32 LastAddr;
 u32 LastAddr_min;
@@ -275,7 +276,7 @@ DynarecCodeEntryPtr DYNACALL rdv_FailedToFindBlock(u32 pc)
 	//printf("rdv_FailedToFindBlock ~ %08X\n",pc);
 	next_pc=pc;
 
-	return rdv_CompilePC();
+	return (DynarecCodeEntryPtr)CC_RW2RX(rdv_CompilePC());
 }
 
 static void ngen_FailedToFindBlock_internal() {
@@ -314,35 +315,27 @@ DynarecCodeEntryPtr DYNACALL rdv_BlockCheckFail(u32 pc)
 {
 	next_pc=pc;
 	recSh4_ClearCache();
-	return rdv_CompilePC();
-}
-
-DynarecCodeEntryPtr rdv_FindCode()
-{
-	DynarecCodeEntryPtr rv=bm_GetCode(next_pc);
-	if (rv==ngen_FailedToFindBlock)
-		return 0;
-	
-	return rv;
+	return (DynarecCodeEntryPtr)CC_RW2RX(rdv_CompilePC());
 }
 
 DynarecCodeEntryPtr rdv_FindOrCompile()
 {
-	DynarecCodeEntryPtr rv=bm_GetCode(next_pc);
-	if (rv==ngen_FailedToFindBlock)
-		rv=rdv_CompilePC();
+	DynarecCodeEntryPtr rv = bm_GetCode(next_pc);  // Returns exec addr
+	if (rv == ngen_FailedToFindBlock)
+		rv = (DynarecCodeEntryPtr)CC_RW2RX(rdv_CompilePC());  // Returns rw addr
 	
 	return rv;
 }
 
-void* DYNACALL rdv_LinkBlock(u8* code,u32 dpc)
+void* DYNACALL rdv_LinkBlock(u8* code, u32 dpc)
 {
-	RuntimeBlockInfo* rbi=bm_GetBlock(code);
+	// cpde is the RX addr to return after, however bm_GetBlock returns RW
+	RuntimeBlockInfo* rbi = bm_GetBlock(code);
 
 	if (!rbi)
 	{
 		printf("Stale block ..");
-		rbi=bm_GetStaleBlock(code);
+		rbi = bm_GetStaleBlock(code);
 	}
 	
 	verify(rbi != NULL);
@@ -365,7 +358,7 @@ void* DYNACALL rdv_LinkBlock(u8* code,u32 dpc)
 			next_pc=rbi->NextBlock;
 	}
 
-	DynarecCodeEntryPtr rv=rdv_FindOrCompile();
+	DynarecCodeEntryPtr rv = rdv_FindOrCompile();  // Returns rx ptr
 
 	bool do_link=bm_GetBlock(code)==rbi;
 
@@ -490,11 +483,24 @@ void recSh4_Init()
 	printf("\n\t CodeCache addr: %p | from: %p | addr here: %p\n", CodeCache, CodeCache, recSh4_Init);
 
 	#if FEAT_SHREC == DYNAREC_JIT
-		if (mprotect(CodeCache, CODE_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC))
-		{
-			perror("\n\tError,Couldn’t mprotect CodeCache!");
-			die("Couldn’t mprotect CodeCache");
-		}
+		#ifdef FEAT_NO_RWX_PAGES
+			int fd = shm_open("/dctmp", O_CREAT | O_RDWR, S_IRUSR | S_IWUSR);
+			shm_unlink("/dctmp");
+			ftruncate(fd, CODE_SIZE);
+
+		    munmap(CodeCache, CODE_SIZE);
+			char *rx_data = mmap(CodeCache, CODE_SIZE, PROT_READ|PROT_EXEC, MAP_SHARED, fd, 0);
+			char *rw_data = mmap(0, CODE_SIZE, PROT_READ|PROT_WRITE, MAP_SHARED, fd, 0);
+			verify(CodeCache == rx_data);  // Ensure it was mapped to the right addr in .text segment
+			CodeCache = (u8*)rw_data;
+			cc_rx_offset = rx_data - rw_data;
+		#else
+			if (mprotect(CodeCache, CODE_SIZE, PROT_READ|PROT_WRITE|PROT_EXEC))
+			{
+				perror("\n\tError,Couldn’t mprotect CodeCache!");
+				die("Couldn’t mprotect CodeCache");
+			}
+		#endif
 	#endif
 
 #if TARGET_IPHONE
@@ -505,6 +511,8 @@ void recSh4_Init()
 
 #endif
 	ngen_init();
+
+	bm_Reset();
 }
 
 void recSh4_Term()

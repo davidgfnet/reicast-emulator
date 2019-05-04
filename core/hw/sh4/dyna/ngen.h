@@ -48,6 +48,14 @@
 
 #define CODE_SIZE   (10*1024*1024)
 
+#ifdef FEAT_NO_RWX_PAGES
+extern uintptr_t cc_rx_offset;
+#define CC_RW2RX(ptr) (void*)(((uintptr_t)ptr) + cc_rx_offset)
+#define CC_RX2RW(ptr) (void*)(((uintptr_t)ptr) - cc_rx_offset)
+#else
+#define CC_RW2RX(ptr) (ptr)
+#define CC_RX2RW(ptr) (ptr)
+#endif
 
 //alternative emit ptr, set to 0 to use the main buffer
 extern u32* emit_ptr;
