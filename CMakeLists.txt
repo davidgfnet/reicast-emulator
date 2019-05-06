@@ -51,14 +51,14 @@ file(GLOB archive_SRCS		${d_core}/archive/*.cpp		${d_core}/archive/*.h)
 
 #### option(rend)
 file(GLOB gl4_SRCS			${d_core}/rend/gl4/*.cpp	${d_core}/rend/gl4/*.h)
-file(GLOB gles_SRCS			${d_core}/rend/gles/*.cpp	${d_core}/rend/gles/*.h)
+file(GLOB gles_SRCS			${d_core}/rend/gles/*.cpp	${d_core}/rend/gles/*.c	${d_core}/rend/gles/*.h)
 
 set(core_SRCS
   ${hw_SRCS}
   ${cfg_SRCS}
   ${rend_SRCS}
   ${gl4_SRCS}
-  ${gles_SRCS}
+  ${gles_SRCS}  ${d_core}/rend/gles/gl32funcs.c
   ${input_SRCS}
   ${reios_SRCS}
   ${imgread_SRCS}
@@ -71,7 +71,8 @@ set(core_SRCS
 )
 
   
-if(${BUILD_COMPILER} EQUAL ${COMPILER_GCC})	# Add Clang if NOT WIN32 *FIXME* 
+if(("${BUILD_COMPILER}" STREQUAL "${COMPILER_GCC}") OR
+   ("${BUILD_COMPILER}" STREQUAL "${COMPILER_CLANG}" AND NOT WIN32))
   list(APPEND core_SRCS ${archive_SRCS})
 endif()
 
@@ -144,7 +145,6 @@ set(deps_SRCS
   ${crypt_SRCS}
   ${imgui_SRCS}
   ${d_deps}/xbrz/xbrz.cpp
-  ${d_deps}/dirent/dirent.c
   ${d_deps}/xxhash/xxhash.c
   ${d_deps}/chdpsr/cdipsr.cpp  # sigh,  this dir is named chdpsr for some reason ...
   ${d_deps}/coreio/coreio.cpp
@@ -152,7 +152,8 @@ set(deps_SRCS
   ${xbyak_H}
 )
   
-if(${BUILD_COMPILER} EQUAL ${COMPILER_GCC})	# Add Clang if NOT WIN32 *FIXME* 
+if(("${BUILD_COMPILER}" STREQUAL "${COMPILER_GCC}") OR
+   ("${BUILD_COMPILER}" STREQUAL "${COMPILER_CLANG}" AND NOT WIN32)) 
   list(APPEND deps_SRCS
     ${lzip_SRCS}
     ${lzma_SRCS}
@@ -164,7 +165,7 @@ endif()
 ### libosd.cmake ################################################################################
 
 
-set(d_aout ${reicast_core_path}/oslib)
+set(d_aout ${d_core}/oslib)
 
 include_directories ("${d_core}/khronos")
 
@@ -199,7 +200,7 @@ elseif (${HOST_OS} EQUAL ${OS_LINUX} OR ${HOST_OS} EQUAL ${OS_ANDROID})
 		${d_core}/linux-dist/main.cpp
 		${d_core}/linux-dist/evdev.cpp)
 	
-      add_definitions(-DSUPPORT_X11)  ## don't use GLES ?
+      add_definitions(-DSUPPORT_X11 -DUSES_HOMEDIR)  ## don't use GLES ?
       link_libraries(X11)
     else()
       list(APPEND osd_SRCS 
@@ -209,9 +210,16 @@ elseif (${HOST_OS} EQUAL ${OS_LINUX} OR ${HOST_OS} EQUAL ${OS_ANDROID})
       )
     endif() # ANDROID
 	
-  add_definitions(-DGLES -DUSE_EVDEV)
-  
-  link_libraries(pthread dl rt asound Xext GLESv2 EGL)
+  add_definitions(-DUSE_EVDEV)
+
+  if(GLES)
+    add_definitions(-DGLES -DNOGL4)
+    link_libraries(pthread dl rt asound Xext GLESv2 EGL)
+    link_libraries(pthread dl rt asound Xext GLESv2 EGL)
+  else()
+    add_definitions(-DGL4)
+    link_libraries(pthread dl rt asound Xext GL GLX)
+  endif()
 
 elseif(${HOST_OS} EQUAL ${OS_DARWIN})
 #
