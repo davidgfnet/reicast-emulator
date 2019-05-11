@@ -68,12 +68,14 @@ static __attribute((used)) void end_slice()
 
 #define STRINGIFY(x) #x
 #define _S(x) STRINGIFY(x)
+// Offset calculated from p_sh4rcb to the SH4 context as follows:
+// FPCB_SIZE (=RAM_SIZE_MAX*4) + FPCB_PAD (=0x100000, 1MB) - noff(whatever)
 #if RAM_SIZE_MAX == 16*1024*1024
-#define CPU_RUNNING 68157284
-#define PC 68157256
+#define CPU_RUNNING 135266080
+#define PC 135266084
 #elif RAM_SIZE_MAX == 32*1024*1024
-#define CPU_RUNNING 135266148
-#define PC 135266120
+#define CPU_RUNNING 135266080
+#define PC 135266084
 #else
 #error RAM_SIZE_MAX unknown
 #endif

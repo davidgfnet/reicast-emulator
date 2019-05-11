@@ -166,8 +166,6 @@ __asm__
 
 void ngen_mainloop(void* v_cntx)
 {
-	Sh4RCB* ctx = (Sh4RCB*)((u8*)v_cntx - sizeof(Sh4RCB));
-
 	__asm__
 	(
 		"stp x19, x20, [sp, #-160]!	\n\t"
@@ -180,8 +178,9 @@ void ngen_mainloop(void* v_cntx)
 		"stp s10, s11, [sp, #112]	\n\t"
 		"stp s12, s13, [sp, #128]	\n\t"
 		"stp x29, x30, [sp, #144]	\n\t"
-		// Use x28 as sh4 context pointer
-		"mov x28, %[cntx]			\n\t"
+		// Use x28 as vmem base pointer
+		// Sh4 ctx is available via negative LDR offsets
+		"mov x28, %[vbase]			\n\t"
 		// Use x27 as cycle_counter
 		"mov w27, %[_SH4_TIMESLICE]	\n\t"
 		// w29 is next_pc
@@ -211,7 +210,6 @@ void ngen_mainloop(void* v_cntx)
 
 		"movz x2, %[RCB_SIZE], lsl #16	\n\t"
 		"sub x2, x28, x2			\n\t"
-		"add x2, x2, %[SH4CTX_SIZE]	\n\t"
 #if RAM_SIZE_MAX == 33554432
 		"ubfx w1, w29, #1, #24		\n\t"	// 24+1 bits: 32 MB
 #elif RAM_SIZE_MAX == 16777216
@@ -234,12 +232,11 @@ void ngen_mainloop(void* v_cntx)
 		"ldp x21, x22, [sp, #16]	\n\t"
 		"ldp x19, x20, [sp], #160	\n\t"
 	:
-	: [cntx] "r"(reinterpret_cast<uintptr_t>(&ctx->cntx)),
-	  [pc] "i"(offsetof(Sh4Context, pc)),
+	: [vbase] "r"(reinterpret_cast<uintptr_t>(v_cntx)),
+	  [pc] "i"((signed)offsetof(Sh4Context, pc) - (signed)sizeof(Sh4Context)),
 	  [_SH4_TIMESLICE] "i"(SH4_TIMESLICE),
-	  [CpuRunning] "i"(offsetof(Sh4Context, CpuRunning)),
-	  [RCB_SIZE] "i" (sizeof(Sh4RCB) >> 16),
-	  [SH4CTX_SIZE] "i" (sizeof(Sh4Context))
+	  [CpuRunning] "i"((signed)offsetof(Sh4Context, CpuRunning) - (signed)sizeof(Sh4Context)),
+	  [RCB_SIZE] "i" (sizeof(Sh4RCB) >> 16)
 	: "memory"
 	);
 }
@@ -630,9 +627,9 @@ public:
 					}
 					else
 					{
-						Sub(x9, x28, offsetof(Sh4RCB, cntx) - offsetof(Sh4RCB, do_sqw_nommu));
+						Sub(x9, x28, sizeof(Sh4RCB) - offsetof(Sh4RCB, do_sqw_nommu));
 						Ldr(x9, MemOperand(x9));
-						Sub(x1, x28, offsetof(Sh4RCB, cntx) - offsetof(Sh4RCB, sq_buffer));
+						Sub(x1, x28, sizeof(Sh4RCB) - offsetof(Sh4RCB, sq_buffer));
 					}
 					Blr(x9);
 					Bind(&not_sqw);
@@ -847,9 +844,11 @@ public:
 
 	MemOperand sh4_context_mem_operand(void *p)
 	{
+		// x28 points to the end of cntx
 		u32 offset = (u8*)p - (u8*)&p_sh4rcb->cntx;
 		verify((offset & 3) == 0 && offset <= 16380);	// FIXME 64-bit regs need multiple of 8 up to 32760
-		return MemOperand(x28, offset);
+		int ldroff = (signed)offset - (signed)sizeof(Sh4Context);
+		return MemOperand(x28, ldroff);
 	}
 
 	void GenReadMemorySlow(const shil_opcode& op)
@@ -988,8 +987,7 @@ public:
 			Str(w29, sh4_context_mem_operand(&next_pc));
 			// TODO Call no_update instead (and check CpuRunning less frequently?)
 			Mov(x2, sizeof(Sh4RCB));
-			Sub(x2, x28, x2);
-			Add(x2, x2, sizeof(Sh4Context));		// x2 now points to FPCB
+			Sub(x2, x28, x2);           // x2 now points to FPCB
 #if RAM_SIZE_MAX == 33554432
 			Ubfx(w1, w29, 1, 24);
 #else
@@ -1173,10 +1171,11 @@ private:
 
 		Instruction *start_instruction = GetCursorAddress<Instruction *>();
 
-		// WARNING: the rewrite code relies on having two ops before the memory access
+		// WARNING: the rewrite code relies on having one op before the memory access
 		// Update ngen_Rewrite (and perhaps read_memory_rewrite_size) if adding or removing code
-		Add(w1, *call_regs[0], sizeof(Sh4Context), LeaveFlags);
-		Bfc(w1, 29, 3);		// addr &= ~0xE0000000
+		// Be careful not to modify call_regs[0], after a rewrite the And+Ldr will be overwritten
+		// and the runtime call will assume the un-modified address is passed as arg.
+		And(w1, *call_regs[0], 0x1fffffff); // addr &= ~0xE0000000
 
 		//printf("direct read memory access opid %d pc %p code addr %08x\n", opid, GetCursorAddress<void *>(), this->block->addr);
 		this->block->memory_accesses[GetCursorAddress<void *>()] = (u32)opid;
@@ -1255,8 +1254,9 @@ private:
 
 		// WARNING: the rewrite code relies on having two ops before the memory access
 		// Update ngen_Rewrite (and perhaps write_memory_rewrite_size) if adding or removing code
-		Add(w7, *call_regs[0], sizeof(Sh4Context), LeaveFlags);
-		Bfc(w7, 29, 3);		// addr &= ~0xE0000000
+		// Be careful not to modify call_regs[0], after a rewrite the And+Ldr will be overwritten
+		// and the runtime call will assume the un-modified address is passed as arg.
+		And(w7, *call_regs[0], 0x1fffffff); // addr &= ~0xE0000000, yes in a single instr!
 
 		//printf("direct write memory access opid %d pc %p code addr %08x\n", opid, GetCursorAddress<void *>(), this->block->addr);
 		this->block->memory_accesses[GetCursorAddress<void *>()] = (u32)opid;
@@ -1420,11 +1420,11 @@ private:
 	std::vector<const VRegister*> call_fregs;
 	Arm64RegAlloc regalloc;
 	RuntimeBlockInfo* block;
-	const int write_memory_rewrite_size = 3;  // same size (fast write) for any size: add, bfc, str
+	const int write_memory_rewrite_size = 2;  // same size (fast write) for any size: and, str
 	#ifdef EXPLODE_SPANS
-	const int read_memory_rewrite_size = 6;	// worst case for u64: add, bfc, ldr, fmov, lsr, fmov
+	const int read_memory_rewrite_size = 5;	// worst case for u64: and, ldr, fmov, lsr, fmov
 	#else
-	const int read_memory_rewrite_size = 4;	// worst case for u64: add, bfc, ldr, str
+	const int read_memory_rewrite_size = 3;	// worst case for u64: and, ldr, str
 	#endif
 };
 
@@ -1481,7 +1481,7 @@ bool ngen_Rewrite(unat& host_pc, unat, unat)
 	u32 opid = it->second;
 	verify(opid < block->oplist.size());
 	const shil_opcode& op = block->oplist[opid];
-	Arm64Assembler *assembler = new Arm64Assembler(code_ptr - 2);	// Skip the 2 preceding ops (bic, add)
+	Arm64Assembler *assembler = new Arm64Assembler(code_ptr - 1);	// Start overwritting the preceding op (and)
 	assembler->InitializeRewrite(block, opid);
 	if (op.op == shop_readm)
 		assembler->GenReadMemorySlow(op);
@@ -1489,7 +1489,7 @@ bool ngen_Rewrite(unat& host_pc, unat, unat)
 		assembler->GenWriteMemorySlow(op);
 	assembler->Finalize(true);
 	delete assembler;
-	host_pc = (unat)(code_ptr - 2);
+	host_pc = (unat)(code_ptr - 1);
 
 	return true;
 }

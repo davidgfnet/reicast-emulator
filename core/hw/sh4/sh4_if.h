@@ -245,15 +245,17 @@ struct sh4_if
 	StartFP* Start;
 };
 
-
+// Sh4 context must be 448 bytes, it's too embedded in the source unfortunately.
 struct Sh4Context
 {
 	union
 	{
 		struct
 		{
-			f32 xffr[32];
-			u32 r[16];
+			int sh4_sched_next;
+			u32 interrupt_pend;
+
+			u32 r_bank[8];
 
 			union
 			{
@@ -265,12 +267,18 @@ struct Sh4Context
 				};
 			} mac;
 
-			u32 r_bank[8];
+			// Push fields to the end of the structure, so that ARM64 can reach it.
+			char filler[144];
 
+			// Offset here 192 bytes. All fields below are in the bottom 256 bytes.
+			// Ensure to keep all JIT accessible fields like this, since ARM64 can't
+			// go back more than -256 bytes for LDR/STR immediates (LDR Reg+SigImm).
 			u32 gbr,ssr,spc,sgr,dbr,vbr;
 			u32 pr,fpul;
-			u32 pc;
 
+			volatile u32 CpuRunning;
+
+			u32 pc;
 			u32 jdyn;
 
 			sr_t sr;
@@ -278,10 +286,8 @@ struct Sh4Context
 			sr_status_t old_sr;
 			fpscr_t old_fpscr;
 
-			volatile u32 CpuRunning;
-
-			int sh4_sched_next;
-			u32 interrupt_pend;
+			f32 xffr[32];
+			u32 r[16];
 		};
 		u64 raw[64-8];
 	};
