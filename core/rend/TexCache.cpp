@@ -206,11 +206,12 @@ vram_block* libCore_vramlock_Lock(u32 start_offset64,u32 end_offset64,void* user
 	{
 		vramlist_lock.Lock();
 	
-		vram.LockRegion(block->start, block->len);
-
-		//TODO: Fix this for 32M wrap as well
-		if (_nvmem_enabled() && VRAM_SIZE == 0x800000) {
-			vram.LockRegion(block->start + VRAM_SIZE, block->len);
+		// Lock VRAM (if vram is 8MB only, we lock its 8MB mirrorr).
+		// Also there's a mirror 32MB down, lock it. No need to lock the 32 bit one, protected.
+		for (unsigned i = 0; i < 2; i++) {
+			vram.LockRegion(block->start + i*32*1024*1024, block->len);
+			if (VRAM_SIZE == 8*1024*1024)
+				vram.LockRegion(block->start + i*32*1024*1024 + VRAM_SIZE, block->len);
 		}
 		
 		vramlock_list_add(block);
@@ -224,11 +225,19 @@ vram_block* libCore_vramlock_Lock(u32 start_offset64,u32 end_offset64,void* user
 
 bool VramLockedWrite(u8* address)
 {
-	size_t offset=address-vram.data;
+	// There's 2 or 4 VRAM mirrors, we should handle all of them.
+	uintptr_t offset = address - vram.data;
 
-	if (offset<VRAM_SIZE)
-	{
+	// For DC/devs: VRAM0 [8MB] VRAM1[8MB]  -16MB 32 bit iface ignore- VRAM2 [8MB] VRAM3[8MB]
+	// For Naomi/2: VRAM0 [16MB]  -16MB 32 bit iface ignore- VRAM1 [16MB]
 
+	// It can be mirror three times.
+	if (offset >= 16*1024*1024)  // Must be (if at all), in the mirror up 32MB)
+		offset -= 32*1024*1024;
+	if (offset >= VRAM_SIZE && VRAM_SIZE == 8*1024*1024)   // 8MB mirrors
+		offset -= 8*1024*1024;
+	
+	if (offset < VRAM_SIZE) {
 		size_t addr_hash = offset/PAGE_SIZE;
 		vector<vram_block*>* list=&VramLocks[addr_hash];
 		
@@ -251,20 +260,14 @@ bool VramLockedWrite(u8* address)
 			}
 			list->clear();
 
+			// Only unlock the region where the game is writing.
 			vram.UnLockRegion((u32)offset&(~(PAGE_SIZE-1)),PAGE_SIZE);
-
-			//TODO: Fix this for 32M wrap as well
-			if (_nvmem_enabled() && VRAM_SIZE == 0x800000) {
-				vram.UnLockRegion((u32)offset&(~(PAGE_SIZE-1)) + VRAM_SIZE,PAGE_SIZE);
-			}
 			
 			vramlist_lock.Unlock();
 		}
-
 		return true;
 	}
-	else
-		return false;
+	return false;
 }
 
 //unlocks mem
